@@ -14,9 +14,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-s', '--scala', dest='scala', help='Path to the Scala build dir')
 parser.add_argument('-d', '--debugPort', dest='debugPort', help='Port on which remote debugger can be attached')
 parser.add_argument('-c', '--corpus', dest='corpus', default="scala-library", help='Project to compile')
-parser.add_argument('-f', '--jfr-file', dest='jfrFile', help='Enable Java Flight Recorder and write the recorting to this file (requires Oracle JVM)')
+parser.add_argument('-f', '--jfr-file', dest='jfrFile', 
+    help='Enable Java Flight Recorder and write the recording to this file (requires Oracle JVM)')
+parser.add_argument('-n', '--repeat', dest='repeat', type=int, default=1, help='Repeat the compilation n times')
 parser.add_argument('-p', '--config', dest='config', default=[], type=str, nargs='+',
-                    help='Config overrides (key=value pairs)')
+    help='Config overrides (key=value pairs)')
 parser.add_argument('additionalOptions', type=str, nargs="*")
 
 options = parser.parse_args()
@@ -48,22 +50,27 @@ debugOptions = []
 if options.debugPort:
     debugOptions = [
         "-J-agentlib:jdwp=transport=dt_socket,server=n,address=localhost:{},suspend=y".format(options.debugPort)]
-
-jfrOptions = []
-if options.jfrFile:
-    jfrOptions = [
-        "-J-XX:+UnlockCommercialFeatures", "-J-XX:+FlightRecorder", "-J-XX:StartFlightRecording=dumponexit=true,filename={}".format(options.jfrFile)]
+        
+def createJfrOptions(index):
+    if not options.jfrFile:
+        return []
+    else:
+        jfrOptions = ["-XX:+UnlockCommercialFeatures", "-XX:+FlightRecorder", 
+        "-XX:+UnlockDiagnosticVMOptions", "-XX:+DebugNonSafepoints"]
+        name, ext = os.path.splitext(options.jfrFile)
+        filename = "{0}_{1:03d}{2}".format(name, index, ext)
+        parameters = "-XX:StartFlightRecording=settings=profile,dumponexit=true,filename={}".format(filename)
+        jfrOptions.append(parameters)
+        return map(lambda v: "-J" + v, jfrOptions)
 
 classpathSeparator = ";" if os.name == 'nt' else ":"
 
 outputBase = tempfile.mkdtemp()
 scalaOutput = os.path.join(outputBase, "scala")
-baselineOutput = os.path.join(outputBase, "baseline")
 
 os.mkdir(scalaOutput)
-os.mkdir(baselineOutput)
 
-def call_compiler(scalaLocation, output, additionalScalacOptions):
+def call_compiler(scalaLocation, output, additionalScalacOptions, index):
     configOverrides = map(lambda v: "-J-D" + v, options.config)
     timeBefore = time.time()
     args = ([ os.path.join(scalaLocation, "bin", "scalac"), "-cp", classpathSeparator.join(scalaJars + jars), "-d", output ] +
@@ -71,12 +78,12 @@ def call_compiler(scalaLocation, output, additionalScalacOptions):
         scalacOptions +
         sources +
         debugOptions +
-        jfrOptions +
+        list(createJfrOptions(index)) +
         additionalScalacOptions)
     subprocess.call(args)
     return time.time() - timeBefore
 
-compilation_time = call_compiler(options.scala, scalaOutput, options.additionalOptions)
-
-print("Compilation done in:", compilation_time, "s")
+for i in range(0, options.repeat):
+    compilation_time = call_compiler(options.scala, scalaOutput, options.additionalOptions, i)
+    print("Compilation done in:", compilation_time, "s")
 
