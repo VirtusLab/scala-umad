@@ -51,24 +51,25 @@ if options.debugPort:
     debugOptions = [
         "-J-agentlib:jdwp=transport=dt_socket,server=n,address=localhost:{},suspend=y".format(options.debugPort)]
         
+outputBase = tempfile.mkdtemp()
+scalaOutput = os.path.join(outputBase, "scala")
+os.mkdir(scalaOutput)
+jfrOutput = os.path.join(outputBase, "jfr")
+if options.jfrFile:
+    os.mkdir(jfrOutput)        
+        
 def createJfrOptions(index):
     if not options.jfrFile:
         return []
     else:
         jfrOptions = ["-XX:+UnlockCommercialFeatures", "-XX:+FlightRecorder", 
         "-XX:+UnlockDiagnosticVMOptions", "-XX:+DebugNonSafepoints"]
-        name, ext = os.path.splitext(options.jfrFile)
-        filename = "{0}_{1:03d}{2}".format(name, index, ext)
+        filename = os.path.join(jfrOutput, "{0:03d}.jfr".format(index))
         parameters = "-XX:StartFlightRecording=settings=profile,dumponexit=true,filename={}".format(filename)
         jfrOptions.append(parameters)
         return map(lambda v: "-J" + v, jfrOptions)
 
 classpathSeparator = ";" if os.name == 'nt' else ":"
-
-outputBase = tempfile.mkdtemp()
-scalaOutput = os.path.join(outputBase, "scala")
-
-os.mkdir(scalaOutput)
 
 def call_compiler(scalaLocation, output, additionalScalacOptions, index):
     configOverrides = map(lambda v: "-J-D" + v, options.config)
@@ -80,10 +81,13 @@ def call_compiler(scalaLocation, output, additionalScalacOptions, index):
         debugOptions +
         list(createJfrOptions(index)) +
         additionalScalacOptions)
-    subprocess.call(args)
+    subprocess.run(args)
     return time.time() - timeBefore
 
 for i in range(0, options.repeat):
     compilation_time = call_compiler(options.scala, scalaOutput, options.additionalOptions, i)
     print("Compilation done in:", compilation_time, "s")
+
+if options.jfrFile:
+    subprocess.run(["java", "oracle.jrockit.jfr.tools.ConCatRepository", jfrOutput, "-o", options.jfrFile])
 
